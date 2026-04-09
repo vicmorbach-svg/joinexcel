@@ -2,11 +2,10 @@ import streamlit as st
 import pandas as pd
 import io
 
-# Configuração da página
-st.set_page_config(page_title="Mesclar Arquivos (Alta Performance)", page_icon="⚡", layout="wide")
+st.set_page_config(page_title="Mesclar e Otimizar Arquivos", page_icon="🗜️", layout="wide")
 
-st.title("⚡ Juntar Arquivos (Modo Rápido)")
-st.write("Faça o upload de vários arquivos. O sistema usa motores otimizados para processar grandes volumes de dados.")
+st.title("🗜️ Juntar e Reduzir Tamanho dos Arquivos")
+st.write("Faça o upload, limpe os dados desnecessários e baixe um arquivo muito mais leve.")
 
 uploaded_files = st.file_uploader(
     "Arraste e solte ou escolha os arquivos", 
@@ -16,69 +15,103 @@ uploaded_files = st.file_uploader(
 
 if uploaded_files:
     dataframes = []
-
-    progress_text = "Lendo arquivos em alta velocidade..."
-    my_bar = st.progress(0, text=progress_text)
+    my_bar = st.progress(0, text="Lendo arquivos...")
 
     for i, file in enumerate(uploaded_files):
         try:
             if file.name.endswith('.csv'):
                 try:
-                    # Tenta ler com pyarrow (muito mais rápido para arquivos grandes)
                     df = pd.read_csv(file, engine='pyarrow')
                 except Exception:
-                    # Fallback para o padrão brasileiro se o pyarrow falhar na codificação
                     file.seek(0)
                     df = pd.read_csv(file, sep=';', encoding='latin1')
             else:
-                # Usa o motor calamine (extremamente rápido para Excel)
                 df = pd.read_excel(file, engine='calamine')
 
             df['Arquivo_Origem'] = file.name
             dataframes.append(df)
-
         except Exception as e:
-            st.error(f"Erro ao processar o arquivo {file.name}: {e}")
+            st.error(f"Erro no arquivo {file.name}: {e}")
 
         my_bar.progress((i + 1) / len(uploaded_files), text=f"Processado: {file.name}")
 
     if dataframes:
-        st.write("---")
-        st.subheader("Prévia dos Dados Combinados")
-
-        # Concatenação otimizada
-        df_final = pd.concat(dataframes, ignore_index=True)
-
-        st.dataframe(df_final.head(10), use_container_width=True)
-        st.caption(f"Total de linhas: {len(df_final):,} | Total de colunas: {len(df_final.columns)}".replace(',', '.'))
+        # Junta os dados brutos
+        df_bruto = pd.concat(dataframes, ignore_index=True)
 
         st.write("---")
-        st.subheader("Opções de Download")
-        st.info("💡 Para arquivos muito grandes, o download em CSV é gerado quase instantaneamente, enquanto o Excel pode demorar vários minutos.")
+        st.header("🛠️ Reduzir Tamanho do Arquivo Final")
 
         col1, col2 = st.columns(2)
 
         with col1:
-            # Geração rápida de CSV
+            st.subheader("1. Escolha as Colunas")
+            todas_colunas = df_bruto.columns.tolist()
+            colunas_selecionadas = st.multiselect(
+                "Remova as colunas que você não precisa exportar:",
+                options=todas_colunas,
+                default=todas_colunas
+            )
+
+        with col2:
+            st.subheader("2. Limpeza e Compressão")
+            remover_vazias = st.checkbox("Remover linhas totalmente vazias", value=True)
+            remover_duplicadas = st.checkbox("Remover linhas duplicadas")
+            otimizar_memoria = st.checkbox("Comprimir tipos de dados (Recomendado)", value=True, 
+                                           help="Transforma textos repetidos em categorias e reduz o tamanho dos números para economizar espaço.")
+
+        # Aplicando as reduções escolhidas pelo usuário
+        df_final = df_bruto.copy()
+
+        if colunas_selecionadas:
+            df_final = df_final[colunas_selecionadas]
+
+        if remover_vazias:
+            df_final = df_final.dropna(how='all')
+
+        if remover_duplicadas:
+            df_final = df_final.drop_duplicates()
+
+        if otimizar_memoria:
+            for col in df_final.columns:
+                # Reduz tamanho de números decimais
+                if df_final[col].dtype == 'float64':
+                    df_final[col] = pd.to_numeric(df_final[col], downcast='float')
+                # Reduz tamanho de números inteiros
+                elif df_final[col].dtype == 'int64':
+                    df_final[col] = pd.to_numeric(df_final[col], downcast='integer')
+                # Transforma textos com muita repetição em categorias
+                elif df_final[col].dtype == 'object':
+                    if len(df_final[col].unique()) / len(df_final[col]) < 0.5:
+                        df_final[col] = df_final[col].astype('category')
+
+        st.write("---")
+        st.subheader("Resumo da Redução")
+        st.success(f"**Linhas finais:** {len(df_final):,} | **Colunas finais:** {len(df_final.columns)}".replace(',', '.'))
+        st.dataframe(df_final.head(5), use_container_width=True)
+
+        st.write("---")
+        col_dl1, col_dl2 = st.columns(2)
+
+        with col_dl1:
             csv_data = df_final.to_csv(index=False).encode('utf-8')
             st.download_button(
-                label="⚡ Baixar Rápido (CSV)",
+                label="⚡ Baixar Arquivo Leve (CSV)",
                 data=csv_data,
-                file_name="arquivos_combinados.csv",
+                file_name="dados_otimizados.csv",
                 mime="text/csv",
                 use_container_width=True
             )
 
-        with col2:
-            # Geração tradicional de Excel (mais lenta)
+        with col_dl2:
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
                 df_final.to_excel(writer, index=False, sheet_name='Dados')
 
             st.download_button(
-                label="📊 Baixar Formatado (Excel)",
+                label="📊 Baixar Arquivo (Excel)",
                 data=buffer.getvalue(),
-                file_name="arquivos_combinados.xlsx",
+                file_name="dados_otimizados.xlsx",
                 mime="application/vnd.ms-excel",
                 use_container_width=True
             )
