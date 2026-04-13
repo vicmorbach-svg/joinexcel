@@ -4,8 +4,8 @@ import io
 
 st.set_page_config(page_title="Mesclar e Otimizar Arquivos", page_icon="🗜️", layout="wide")
 
-st.title("🗜️ Juntar e Reduzir Tamanho dos Arquivos")
-st.write("Faça o upload, limpe os dados desnecessários e baixe um arquivo muito mais leve.")
+st.title("🗜️ Juntar e Exportar Arquivos (Excel, CSV, Parquet)")
+st.write("Faça o upload, limpe os dados e baixe no formato ideal para o seu volume de dados.")
 
 uploaded_files = st.file_uploader(
     "Arraste e solte ou escolha os arquivos", 
@@ -36,7 +36,6 @@ if uploaded_files:
         my_bar.progress((i + 1) / len(uploaded_files), text=f"Processado: {file.name}")
 
     if dataframes:
-        # Junta os dados brutos
         df_bruto = pd.concat(dataframes, ignore_index=True)
 
         st.write("---")
@@ -57,10 +56,9 @@ if uploaded_files:
             st.subheader("2. Limpeza e Compressão")
             remover_vazias = st.checkbox("Remover linhas totalmente vazias", value=True)
             remover_duplicadas = st.checkbox("Remover linhas duplicadas")
-            otimizar_memoria = st.checkbox("Comprimir tipos de dados (Recomendado)", value=True, 
-                                           help="Transforma textos repetidos em categorias e reduz o tamanho dos números para economizar espaço.")
+            otimizar_memoria = st.checkbox("Comprimir tipos de dados (Recomendado)", value=True)
 
-        # Aplicando as reduções escolhidas pelo usuário
+        # Aplicando as reduções
         df_final = df_bruto.copy()
 
         if colunas_selecionadas:
@@ -74,13 +72,10 @@ if uploaded_files:
 
         if otimizar_memoria:
             for col in df_final.columns:
-                # Reduz tamanho de números decimais
                 if df_final[col].dtype == 'float64':
                     df_final[col] = pd.to_numeric(df_final[col], downcast='float')
-                # Reduz tamanho de números inteiros
                 elif df_final[col].dtype == 'int64':
                     df_final[col] = pd.to_numeric(df_final[col], downcast='integer')
-                # Transforma textos com muita repetição em categorias
                 elif df_final[col].dtype == 'object':
                     if len(df_final[col].unique()) / len(df_final[col]) < 0.5:
                         df_final[col] = df_final[col].astype('category')
@@ -91,25 +86,43 @@ if uploaded_files:
         st.dataframe(df_final.head(5), use_container_width=True)
 
         st.write("---")
-        col_dl1, col_dl2 = st.columns(2)
+        st.subheader("Opções de Download")
+        st.info("💡 Para arquivos gigantes, o formato **Parquet** é o mais recomendado. Ele comprime os dados e abre muito mais rápido no Power BI ou Python.")
+
+        # Criando 3 colunas para os botões de download
+        col_dl1, col_dl2, col_dl3 = st.columns(3)
 
         with col_dl1:
+            # Geração de Parquet (Mais rápido e leve)
+            parquet_buffer = io.BytesIO()
+            df_final.to_parquet(parquet_buffer, engine='pyarrow', index=False)
+            st.download_button(
+                label="🚀 Baixar Ultra Leve (Parquet)",
+                data=parquet_buffer.getvalue(),
+                file_name="dados_otimizados.parquet",
+                mime="application/octet-stream",
+                use_container_width=True
+            )
+
+        with col_dl2:
+            # Geração de CSV
             csv_data = df_final.to_csv(index=False).encode('utf-8')
             st.download_button(
-                label="⚡ Baixar Arquivo Leve (CSV)",
+                label="⚡ Baixar Rápido (CSV)",
                 data=csv_data,
                 file_name="dados_otimizados.csv",
                 mime="text/csv",
                 use_container_width=True
             )
 
-        with col_dl2:
+        with col_dl3:
+            # Geração de Excel
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
                 df_final.to_excel(writer, index=False, sheet_name='Dados')
 
             st.download_button(
-                label="📊 Baixar Arquivo (Excel)",
+                label="📊 Baixar Pesado (Excel)",
                 data=buffer.getvalue(),
                 file_name="dados_otimizados.xlsx",
                 mime="application/vnd.ms-excel",
