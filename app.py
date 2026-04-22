@@ -58,17 +58,10 @@ if uploaded_files:
             remover_duplicadas = st.checkbox("Remover linhas duplicadas")
             otimizar_memoria = st.checkbox("Comprimir tipos de dados (Recomendado)", value=True)
 
-        # Aplicando as reduções
-        df_final = df_bruto.copy()
-
-        if colunas_selecionadas:
-            df_final = df_final[colunas_selecionadas]
-
-        if remover_vazias:
-            df_final = df_final.dropna(how='all')
-
-        if remover_duplicadas:
-            df_final = df_final.drop_duplicates()
+                # --- CORREÇÃO: Padronizar colunas de texto para evitar erro no PyArrow ---
+        for col in df_final.select_dtypes(include=['object']).columns:
+            df_final[col] = df_final[col].astype("string")
+        # -------------------------------------------------------------------------
 
         if otimizar_memoria:
             for col in df_final.columns:
@@ -76,7 +69,8 @@ if uploaded_files:
                     df_final[col] = pd.to_numeric(df_final[col], downcast='float')
                 elif df_final[col].dtype == 'int64':
                     df_final[col] = pd.to_numeric(df_final[col], downcast='integer')
-                elif df_final[col].dtype == 'object':
+                # Atualizado para verificar 'string' em vez de 'object'
+                elif df_final[col].dtype == 'string': 
                     if len(df_final[col].unique()) / len(df_final[col]) < 0.5:
                         df_final[col] = df_final[col].astype('category')
 
