@@ -58,21 +58,51 @@ if uploaded_files:
             remover_duplicadas = st.checkbox("Remover linhas duplicadas")
             otimizar_memoria = st.checkbox("Comprimir tipos de dados (Recomendado)", value=True)
 
-                # --- CORREÇÃO: Padronizar colunas de texto para evitar erro no PyArrow ---
-        for col in df_final.select_dtypes(include=['object']).columns:
-            df_final[col] = df_final[col].astype("string")
-        # -------------------------------------------------------------------------
+                # Aplicando as reduções
+        df_final = df_bruto.copy()
 
-        if otimizar_memoria:
-            for col in df_final.columns:
-                if df_final[col].dtype == 'float64':
-                    df_final[col] = pd.to_numeric(df_final[col], downcast='float')
-                elif df_final[col].dtype == 'int64':
-                    df_final[col] = pd.to_numeric(df_final[col], downcast='integer')
-                # Atualizado para verificar 'string' em vez de 'object'
-                elif df_final[col].dtype == 'string': 
-                    if len(df_final[col].unique()) / len(df_final[col]) < 0.5:
-                        df_final[col] = df_final[col].astype('category')
+        # 1. Tratamento para colunas com nomes duplicados (Comum em Excel corrompido)
+        if df_final.columns.duplicated().any():
+            colunas_dup = df_final.columns[df_final.columns.duplicated()].unique().tolist()
+            st.warning(f"⚠️ **Atenção:** Os arquivos contêm colunas com nomes repetidos: `{colunas_dup}`. As duplicatas foram removidas para evitar falhas.")
+            df_final = df_final.loc[:, ~df_final.columns.duplicated()]
+
+        # 2. Filtro de colunas seguro
+        if colunas_selecionadas:
+            colunas_validas = [c for c in colunas_selecionadas if c in df_final.columns]
+            df_final = df_final[colunas_validas]
+
+        if remover_vazias:
+            df_final = df_final.dropna(how='all')
+
+        if remover_duplicadas:
+            df_final = df_final.drop_duplicates()
+
+        # 3. Tratamento de erros na conversão e otimização
+        try:
+            # Padronizar colunas de texto com alerta individual por coluna
+            for col in df_final.select_dtypes(include=['object']).columns:
+                try:
+                    df_final[col] = df_final[col].astype("string")
+                except Exception as e:
+                    st.warning(f"⚠️ **Coluna corrompida:** Não foi possível processar a coluna `{col}`. Detalhe: {e}")
+
+            # Otimização de memória com alerta individual
+            if otimizar_memoria:
+                for col in df_final.columns:
+                    try:
+                        if df_final[col].dtype == 'float64':
+                            df_final[col] = pd.to_numeric(df_final[col], downcast='float')
+                        elif df_final[col].dtype == 'int64':
+                            df_final[col] = pd.to_numeric(df_final[col], downcast='integer')
+                        elif df_final[col].dtype == 'string': 
+                            if len(df_final[col].unique()) / len(df_final[col]) < 0.5:
+                                df_final[col] = df_final[col].astype('category')
+                    except Exception as e:
+                        st.warning(f"⚠️ **Aviso de Otimização:** A coluna `{col}` tem dados inconsistentes e não pôde ser comprimida.")
+
+        except Exception as e:
+            st.error(f"🚨 **Erro estrutural ao processar os dados:** {e}")
 
         st.write("---")
         st.subheader("Resumo da Redução")
