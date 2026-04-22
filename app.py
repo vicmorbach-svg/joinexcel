@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import io
+import gc  # Biblioteca nativa do Python para limpar a memória RAM
 
 st.set_page_config(page_title="Mesclar e Otimizar Arquivos", page_icon="🗜️", layout="wide")
 
@@ -8,8 +9,8 @@ st.title("🗜️ Juntar e Exportar Arquivos (Excel, CSV, Parquet)")
 st.write("Faça o upload, limpe os dados e baixe no formato ideal para o seu volume de dados.")
 
 uploaded_files = st.file_uploader(
-    "Arraste e solte ou escolha os arquivos", 
-    type=["xlsx", "xls", "csv"], 
+    "Arraste e solte ou escolha os arquivos",
+    type=["xlsx", "xls", "csv"],
     accept_multiple_files=True
 )
 
@@ -36,7 +37,12 @@ if uploaded_files:
         my_bar.progress((i + 1) / len(uploaded_files), text=f"Processado: {file.name}")
 
     if dataframes:
-        df_bruto = pd.concat(dataframes, ignore_index=True)
+        # 1. Junta os arquivos direto na variável final (sem criar df_bruto)
+        df_final = pd.concat(dataframes, ignore_index=True)
+
+        # 2. Limpeza imediata de memória
+        del dataframes # Deleta a lista original da memória
+        gc.collect()   # Força o servidor a esvaziar a lixeira da RAM
 
         st.write("---")
         st.header("🛠️ Reduzir Tamanho do Arquivo Final")
@@ -45,7 +51,7 @@ if uploaded_files:
 
         with col1:
             st.subheader("1. Escolha as Colunas")
-            todas_colunas = df_bruto.columns.tolist()
+            todas_colunas = df_final.columns.tolist()
             colunas_selecionadas = st.multiselect(
                 "Remova as colunas que você não precisa exportar:",
                 options=todas_colunas,
@@ -58,19 +64,10 @@ if uploaded_files:
             remover_duplicadas = st.checkbox("Remover linhas duplicadas")
             otimizar_memoria = st.checkbox("Comprimir tipos de dados (Recomendado)", value=True)
 
-                # Aplicando as reduções
-        df_final = df_bruto.copy()
-
-        # 1. Tratamento para colunas com nomes duplicados (Comum em Excel corrompido)
-        if df_final.columns.duplicated().any():
-            colunas_dup = df_final.columns[df_final.columns.duplicated()].unique().tolist()
-            st.warning(f"⚠️ **Atenção:** Os arquivos contêm colunas com nomes repetidos: `{colunas_dup}`. As duplicatas foram removidas para evitar falhas.")
-            df_final = df_final.loc[:, ~df_final.columns.duplicated()]
-
-        # 2. Filtro de colunas seguro
-        if colunas_selecionadas:
-            colunas_validas = [c for c in colunas_selecionadas if c in df_final.columns]
-            df_final = df_final[colunas_validas]
+        # Aplicando as reduções diretamente no df_final
+        if colunas_selecionadas and len(colunas_selecionadas) < len(todas_colunas):
+            df_final = df_final[colunas_selecionadas]
+            gc.collect() # Limpa a memória das colunas descartadas
 
         if remover_vazias:
             df_final = df_final.dropna(how='all')
@@ -78,31 +75,25 @@ if uploaded_files:
         if remover_duplicadas:
             df_final = df_final.drop_duplicates()
 
-        # 3. Tratamento de erros na conversão e otimização
-        try:
-            # Padronizar colunas de texto com alerta individual por coluna
-            for col in df_final.select_dtypes(include=['object']).columns:
+        # Correção do erro do PyArrow (Object para String)
+        for col in df_final.select_dtypes(include=['object']).columns:
+            try:
+                df_final[col] = df_final[col].astype("string")
+            except:
+                pass
+
+        if otimizar_memoria:
+            for col in df_final.columns:
                 try:
-                    df_final[col] = df_final[col].astype("string")
-                except Exception as e:
-                    st.warning(f"⚠️ **Coluna corrompida:** Não foi possível processar a coluna `{col}`. Detalhe: {e}")
-
-            # Otimização de memória com alerta individual
-            if otimizar_memoria:
-                for col in df_final.columns:
-                    try:
-                        if df_final[col].dtype == 'float64':
-                            df_final[col] = pd.to_numeric(df_final[col], downcast='float')
-                        elif df_final[col].dtype == 'int64':
-                            df_final[col] = pd.to_numeric(df_final[col], downcast='integer')
-                        elif df_final[col].dtype == 'string': 
-                            if len(df_final[col].unique()) / len(df_final[col]) < 0.5:
-                                df_final[col] = df_final[col].astype('category')
-                    except Exception as e:
-                        st.warning(f"⚠️ **Aviso de Otimização:** A coluna `{col}` tem dados inconsistentes e não pôde ser comprimida.")
-
-        except Exception as e:
-            st.error(f"🚨 **Erro estrutural ao processar os dados:** {e}")
+                    if df_final[col].dtype == 'float64':
+                        df_final[col] = pd.to_numeric(df_final[col], downcast='float')
+                    elif df_final[col].dtype == 'int64':
+                        df_final[col] = pd.to_numeric(df_final[col], downcast='integer')
+                    elif df_final[col].dtype == 'string':
+                        if len(df_final[col].unique()) / len(df_final[col]) < 0.5:
+                            df_final[col] = df_final[col].astype('category')
+                except:
+                    pass
 
         st.write("---")
         st.subheader("Resumo da Redução")
@@ -113,11 +104,9 @@ if uploaded_files:
         st.subheader("Opções de Download")
         st.info("💡 Para arquivos gigantes, o formato **Parquet** é o mais recomendado. Ele comprime os dados e abre muito mais rápido no Power BI ou Python.")
 
-        # Criando 3 colunas para os botões de download
         col_dl1, col_dl2, col_dl3 = st.columns(3)
 
         with col_dl1:
-            # Geração de Parquet (Mais rápido e leve)
             parquet_buffer = io.BytesIO()
             df_final.to_parquet(parquet_buffer, engine='pyarrow', index=False)
             st.download_button(
@@ -129,7 +118,6 @@ if uploaded_files:
             )
 
         with col_dl2:
-            # Geração de CSV
             csv_data = df_final.to_csv(index=False).encode('utf-8')
             st.download_button(
                 label="⚡ Baixar Rápido (CSV)",
@@ -140,7 +128,7 @@ if uploaded_files:
             )
 
         with col_dl3:
-            # Geração de Excel
+            # Atenção: Gerar Excel consome muita memória. 
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
                 df_final.to_excel(writer, index=False, sheet_name='Dados')
