@@ -128,15 +128,32 @@ if uploaded_files:
             )
 
         with col_dl3:
-            # Atenção: Gerar Excel consome muita memória. 
-            buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-                df_final.to_excel(writer, index=False, sheet_name='Dados')
+            # Função para limpar a memória RAM logo após o download
+            def limpar_memoria_excel():
+                if 'excel_buffer' in st.session_state:
+                    del st.session_state['excel_buffer']
+                    import gc
+                    gc.collect()
 
-            st.download_button(
-                label="📊 Baixar Pesado (Excel)",
-                data=buffer.getvalue(),
-                file_name="dados_otimizados.xlsx",
-                mime="application/vnd.ms-excel",
-                use_container_width=True
-            )
+            # 1. Se o arquivo ainda não foi gerado, mostra o botão de "Gerar"
+            if 'excel_buffer' not in st.session_state:
+                if st.button("⚙️ Preparar Excel (Pesado)", use_container_width=True):
+                    with st.spinner("Processando arquivo Excel..."):
+                        buffer = io.BytesIO()
+                        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+                            df_final.to_excel(writer, index=False, sheet_name='Dados')
+
+                        # Salva o arquivo temporariamente na sessão e recarrega a tela
+                        st.session_state['excel_buffer'] = buffer.getvalue()
+                        st.rerun()
+
+            # 2. Se o arquivo já foi gerado, mostra o botão de "Baixar"
+            else:
+                st.download_button(
+                    label="📊 Baixar Excel",
+                    data=st.session_state['excel_buffer'],
+                    file_name="dados_otimizados.xlsx",
+                    mime="application/vnd.ms-excel",
+                    use_container_width=True,
+                    on_click=limpar_memoria_excel # Limpa a memória ao clicar
+                )
